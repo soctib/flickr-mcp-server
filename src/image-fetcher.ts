@@ -1,4 +1,4 @@
-import { IMAGE_SIZE_PRIORITY, MAX_IMAGE_BYTES } from "./constants.js";
+import { IMAGE_SIZE_PRIORITY, IMAGE_SIZE_PRIORITY_MEDIUM, MAX_IMAGE_BYTES, MAX_IMAGE_BYTES_MEDIUM } from "./constants.js";
 import type { FlickrSize } from "./types.js";
 
 interface FetchedImage {
@@ -12,6 +12,20 @@ interface FetchedImage {
 export async function fetchPhoto(
   sizes: FlickrSize[]
 ): Promise<FetchedImage | null> {
+  return fetchWithPriority(sizes, IMAGE_SIZE_PRIORITY, MAX_IMAGE_BYTES);
+}
+
+export async function fetchPhotoMedium(
+  sizes: FlickrSize[]
+): Promise<FetchedImage | null> {
+  return fetchWithPriority(sizes, IMAGE_SIZE_PRIORITY_MEDIUM, MAX_IMAGE_BYTES_MEDIUM);
+}
+
+async function fetchWithPriority(
+  sizes: FlickrSize[],
+  priority: readonly string[],
+  maxBytes: number
+): Promise<FetchedImage | null> {
   // Build lookup of available sizes
   const sizeMap = new Map<string, FlickrSize>();
   for (const s of sizes) {
@@ -19,25 +33,25 @@ export async function fetchPhoto(
   }
 
   // Try each preferred size in order
-  for (const label of IMAGE_SIZE_PRIORITY) {
+  for (const label of priority) {
     const size = sizeMap.get(label);
     if (!size) continue;
 
-    const result = await tryFetchImage(size);
+    const result = await tryFetchImage(size, maxBytes);
     if (result) return result;
   }
 
   return null;
 }
 
-async function tryFetchImage(size: FlickrSize): Promise<FetchedImage | null> {
+async function tryFetchImage(size: FlickrSize, maxBytes: number): Promise<FetchedImage | null> {
   try {
     const response = await fetch(size.source);
     if (!response.ok) return null;
 
     const buffer = await response.arrayBuffer();
 
-    if (buffer.byteLength > MAX_IMAGE_BYTES) {
+    if (buffer.byteLength > maxBytes) {
       return null;
     }
 

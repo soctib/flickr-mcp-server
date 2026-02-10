@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { getFlickr, formatFlickrError } from "../flickr-client.js";
+import { getFlickr, getUserId, formatFlickrError } from "../flickr-client.js";
 import { extractContent } from "../formatters.js";
 import type { FlickrPhoto } from "../types.js";
 
@@ -29,21 +29,55 @@ async function fetchThumbnail(
 export function registerThumbTools(server: McpServer) {
   server.tool(
     "flickr_view_thumbs",
-    "View multiple photos as small thumbnails (150px squares) for browsing. Returns images with titles and IDs. Use this to get a visual overview before diving into individual photos.",
+    "View multiple photos as small thumbnails (150px squares) for browsing. Returns images with titles and IDs. Pass photo IDs directly, or pass an album_id to browse all photos in that album.",
     {
       photo_ids: z
         .array(z.string())
         .min(1)
         .max(MAX_THUMBS)
+        .optional()
         .describe(`Array of photo IDs to view as thumbnails (max ${MAX_THUMBS})`),
+      album_id: z
+        .string()
+        .optional()
+        .describe("An album/photoset ID. Shows thumbnails for all photos in the album (first 20)."),
     },
-    async ({ photo_ids }) => {
+    async ({ photo_ids, album_id }) => {
       try {
         const flickr = getFlickr();
 
+        if (!photo_ids && !album_id) {
+          return {
+            content: [{ type: "text", text: "Provide either photo_ids or album_id." }],
+            isError: true,
+          };
+        }
+
+        let ids: string[];
+
+        if (album_id) {
+          const albumRes = await flickr("flickr.photosets.getPhotos", {
+            photoset_id: album_id,
+            user_id: getUserId(),
+            per_page: String(MAX_THUMBS),
+            page: "1",
+          });
+          const photos = albumRes.photoset.photo || [];
+          ids = photos.map((p: any) => p.id);
+          if (ids.length === 0) {
+            return {
+              content: [{ type: "text", text: "Album is empty." }],
+            };
+          }
+        } else {
+          ids = photo_ids!;
+        }
+
+        const photo_ids_resolved = ids;
+
         // Fetch info for all photos in parallel to get thumbnail URLs
         const infoResults = await Promise.all(
-          photo_ids.map(async (photo_id) => {
+          photo_ids_resolved.map(async (photo_id) => {
             try {
               const res = await flickr("flickr.photos.getSizes", { photo_id });
               const infoRes = await flickr("flickr.photos.getInfo", { photo_id });

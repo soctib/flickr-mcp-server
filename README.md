@@ -70,8 +70,8 @@ Alternatively, leave credentials in the `.env` file and omit the `env` block.
 | Tool | Description |
 |------|-------------|
 | `flickr_get_recent_photos` | List your recent uploads with metadata. Filter by visibility (public, private, friends, family). |
-| `flickr_view_photo` | Fetch a photo's image and full metadata (title, description, tags, dates, views, faves, comments, Flickr URL). |
-| `flickr_view_thumbs` | View multiple photos as 150px square thumbnails for quick browsing. Pass up to 20 photo IDs. |
+| `flickr_view_photo` | Fetch a photo's image and full metadata. Pass up to 10 IDs to view multiple photos at medium size. |
+| `flickr_view_thumbs` | View multiple photos as 150px square thumbnails. Pass photo IDs, or an album ID to browse visually. |
 | `flickr_set_metadata` | Update a photo's title and/or description. |
 | `flickr_set_tags` | Replace all tags on a photo. Multi-word tags must be quoted. |
 
@@ -89,7 +89,7 @@ Alternatively, leave credentials in the `.env` file and omit the `env` block.
 | `flickr_list_groups` | List groups you're a member of, with submission limits. |
 | `flickr_search_groups` | Search Flickr for groups by topic. |
 | `flickr_get_group_recents` | Browse recent photos in a group's pool to evaluate activity and fit. |
-| `flickr_get_photo_contexts` | Get all groups and albums a photo already belongs to. |
+| `flickr_get_photo_contexts` | Get all groups and albums photos belong to. Pass photo IDs, or an album ID to check every photo at once. |
 | `flickr_add_to_group` | Submit a photo to a group pool. Blocks private photos from being submitted. |
 | `flickr_remove_from_group` | Remove a photo from a group pool. |
 

@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getFlickr, formatFlickrError } from "../flickr-client.js";
-import { fetchPhoto } from "../image-fetcher.js";
+import { fetchPhoto, fetchPhotoMedium } from "../image-fetcher.js";
 import { formatPhotoListItem, formatPhotoMetadata } from "../formatters.js";
 import type { FlickrPhoto, FlickrPhotoInfo, FlickrSize } from "../types.js";
 
@@ -84,55 +84,80 @@ export function registerPhotoTools(server: McpServer) {
 
   server.tool(
     "flickr_view_photo",
-    "Fetch a specific photo's image and full metadata so you can SEE it. Returns the image and details including title, description, tags, dates, view/fave/comment counts, and Flickr URL.",
+    "Fetch a specific photo's image and full metadata so you can SEE it. Returns the image and details including title, description, tags, dates, view/fave/comment counts, and Flickr URL. Single photo: shown at large size. Array of up to 10 photo IDs: each shown at medium size to keep total response size manageable.",
     {
-      photo_id: z.string().describe("The Flickr photo ID"),
+      photo_id: z
+        .union([z.string(), z.array(z.string()).min(1).max(10)])
+        .describe("A single photo ID, or an array of up to 10 photo IDs (shown at medium size)"),
     },
     async ({ photo_id }) => {
       try {
         const flickr = getFlickr();
-
-        // Fetch info and sizes in parallel
-        const [infoRes, sizesRes] = await Promise.all([
-          flickr("flickr.photos.getInfo", { photo_id }),
-          flickr("flickr.photos.getSizes", { photo_id }),
-        ]);
-
-        const info: FlickrPhotoInfo = infoRes.photo;
-        const sizes: FlickrSize[] = sizesRes.sizes.size;
-
-        // Format metadata text
-        const metadataText = formatPhotoMetadata(info);
-
-        // Try to fetch the image
-        const image = await fetchPhoto(sizes);
+        const ids = Array.isArray(photo_id) ? photo_id : [photo_id];
+        const isBatch = ids.length > 1;
 
         const content: Array<
           | { type: "text"; text: string }
           | { type: "image"; data: string; mimeType: string }
         > = [];
 
-        if (image) {
-          content.push({
-            type: "image" as const,
-            data: image.data,
-            mimeType: image.mimeType,
-          });
-          content.push({
-            type: "text" as const,
-            text:
-              metadataText +
-              `\n**Image size shown:** ${image.label} (${image.width}x${image.height})`,
-          });
-        } else {
-          const flickrUrl =
-            info.urls.url.find((u) => u.type === "photopage")?._content ?? "";
-          content.push({
-            type: "text" as const,
-            text:
-              metadataText +
-              `\n**Note:** Image too large to display inline. View at: ${flickrUrl}`,
-          });
+        const results = await Promise.all(
+          ids.map(async (id) => {
+            try {
+              const [infoRes, sizesRes] = await Promise.all([
+                flickr("flickr.photos.getInfo", { photo_id: id }),
+                flickr("flickr.photos.getSizes", { photo_id: id }),
+              ]);
+              const info: FlickrPhotoInfo = infoRes.photo;
+              const sizes: FlickrSize[] = sizesRes.sizes.size;
+              const image = isBatch
+                ? await fetchPhotoMedium(sizes)
+                : await fetchPhoto(sizes);
+              return { id, info, sizes, image, error: null };
+            } catch (err: any) {
+              return { id, info: null, sizes: null, image: null, error: err.message || String(err) };
+            }
+          })
+        );
+
+        for (const r of results) {
+          if (r.error) {
+            content.push({
+              type: "text" as const,
+              text: `**Photo \`${r.id}\`:** Error — ${r.error}`,
+            });
+            continue;
+          }
+
+          const info = r.info!;
+          const metadataText = formatPhotoMetadata(info);
+
+          if (r.image) {
+            content.push({
+              type: "image" as const,
+              data: r.image.data,
+              mimeType: r.image.mimeType,
+            });
+            content.push({
+              type: "text" as const,
+              text:
+                metadataText +
+                `\n**Image size shown:** ${r.image.label} (${r.image.width}x${r.image.height})`,
+            });
+          } else {
+            const flickrUrl =
+              info.urls.url.find((u) => u.type === "photopage")?._content ?? "";
+            content.push({
+              type: "text" as const,
+              text:
+                metadataText +
+                `\n**Note:** Image too large to display inline. View at: ${flickrUrl}`,
+            });
+          }
+        }
+
+        if (content.length === 0) {
+          content.push({ type: "text" as const, text: "No photos could be loaded." });
         }
 
         return { content };

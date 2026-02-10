@@ -5,7 +5,15 @@ export const IMAGE_SIZE_PRIORITY = [
   "Medium",
 ] as const;
 
+export const IMAGE_SIZE_PRIORITY_MEDIUM = [
+  "Medium 640",
+  "Medium",
+  "Small 320",
+  "Small",
+] as const;
+
 export const MAX_IMAGE_BYTES = 700_000;
+export const MAX_IMAGE_BYTES_MEDIUM = 200_000;
 
 export const FLICKR_ERROR_MESSAGES: Record<number, string> = {
   1: "Photo/resource not found or not owned by you.",

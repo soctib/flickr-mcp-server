@@ -129,40 +129,118 @@ export function registerGroupTools(server: McpServer) {
 
   server.tool(
     "flickr_get_photo_contexts",
-    "Get all groups and albums a photo belongs to. Useful for checking where a photo has already been submitted.",
+    "Get all groups and albums photos belong to. Pass photo IDs directly, or pass an album_id to check every photo in that album. All lookups run in parallel. Useful for checking where photos have already been submitted before adding them to more groups.",
     {
-      photo_id: z.string().describe("The Flickr photo ID"),
+      photo_id: z
+        .union([z.string(), z.array(z.string()).max(50)])
+        .optional()
+        .describe("A single photo ID or array of up to 50 photo IDs"),
+      album_id: z
+        .string()
+        .optional()
+        .describe("An album/photoset ID. All photos in the album will be checked."),
     },
-    async ({ photo_id }) => {
+    async ({ photo_id, album_id }) => {
       try {
         const flickr = getFlickr();
-        const res = await flickr("flickr.photos.getAllContexts", { photo_id });
 
-        const groups = res.set ? (Array.isArray(res.set) ? res.set : [res.set]) : [];
-        const pools = res.pool ? (Array.isArray(res.pool) ? res.pool : [res.pool]) : [];
-
-        let text = `## Contexts for photo \`${photo_id}\`\n\n`;
-
-        if (pools.length === 0 && groups.length === 0) {
-          text += "This photo is not in any groups or albums.";
-          return { content: [{ type: "text", text }] };
+        if (!photo_id && !album_id) {
+          return {
+            content: [{ type: "text", text: "Provide either photo_id or album_id." }],
+            isError: true,
+          };
         }
 
-        if (pools.length > 0) {
-          text += `### Groups (${pools.length})\n\n`;
-          pools.forEach((p: any, i: number) => {
-            const title = typeof p.title === "string" ? p.title : p.title?._content ?? "(unknown)";
-            text += `${i + 1}. **${title}** (NSID: \`${p.id}\`)\n`;
-            text += `   URL: https://www.flickr.com/groups/${p.id}/\n`;
+        let ids: string[];
+        let albumTitle = "";
+
+        if (album_id) {
+          // Fetch all photo IDs from the album (up to 500)
+          const albumRes = await flickr("flickr.photosets.getPhotos", {
+            photoset_id: album_id,
+            user_id: getUserId(),
+            per_page: "500",
+            page: "1",
           });
+          const photos = albumRes.photoset.photo || [];
+          ids = photos.map((p: any) => p.id);
+          albumTitle = albumRes.photoset.title || album_id;
+          if (ids.length === 0) {
+            return {
+              content: [{ type: "text", text: `Album "${albumTitle}" is empty.` }],
+            };
+          }
+        } else {
+          ids = Array.isArray(photo_id) ? photo_id : [photo_id!];
         }
 
-        if (groups.length > 0) {
-          text += `\n### Albums (${groups.length})\n\n`;
-          groups.forEach((s: any, i: number) => {
-            const title = typeof s.title === "string" ? s.title : s.title?._content ?? "(unknown)";
-            text += `${i + 1}. **${title}** (ID: \`${s.id}\`)\n`;
-          });
+        const results = await Promise.all(
+          ids.map(async (id) => {
+            try {
+              const res = await flickr("flickr.photos.getAllContexts", { photo_id: id });
+              const albums = res.set ? (Array.isArray(res.set) ? res.set : [res.set]) : [];
+              const pools = res.pool ? (Array.isArray(res.pool) ? res.pool : [res.pool]) : [];
+              return { id, albums, pools, error: null };
+            } catch (err: any) {
+              return { id, albums: [], pools: [], error: err.message || String(err) };
+            }
+          })
+        );
+
+        let text = "";
+
+        if (ids.length === 1) {
+          // Single photo — detailed format
+          const r = results[0];
+          text = `## Contexts for photo \`${r.id}\`\n\n`;
+
+          if (r.error) {
+            text += `Error: ${r.error}`;
+          } else if (r.pools.length === 0 && r.albums.length === 0) {
+            text += "This photo is not in any groups or albums.";
+          } else {
+            if (r.pools.length > 0) {
+              text += `### Groups (${r.pools.length})\n\n`;
+              r.pools.forEach((p: any, i: number) => {
+                const title = typeof p.title === "string" ? p.title : p.title?._content ?? "(unknown)";
+                text += `${i + 1}. **${title}** (NSID: \`${p.id}\`)\n`;
+                text += `   URL: https://www.flickr.com/groups/${p.id}/\n`;
+              });
+            }
+            if (r.albums.length > 0) {
+              text += `\n### Albums (${r.albums.length})\n\n`;
+              r.albums.forEach((s: any, i: number) => {
+                const title = typeof s.title === "string" ? s.title : s.title?._content ?? "(unknown)";
+                text += `${i + 1}. **${title}** (ID: \`${s.id}\`)\n`;
+              });
+            }
+          }
+        } else {
+          // Multiple photos — compact table format
+          const heading = albumTitle
+            ? `## Album "${albumTitle}" — Contexts (${ids.length} photos)`
+            : `## Photo Contexts (${ids.length} photos)`;
+          text = heading + "\n\n";
+          for (const r of results) {
+            const groupNames = r.pools.map((p: any) =>
+              typeof p.title === "string" ? p.title : p.title?._content ?? "(unknown)"
+            );
+            const albumNames = r.albums.map((s: any) =>
+              typeof s.title === "string" ? s.title : s.title?._content ?? "(unknown)"
+            );
+
+            text += `**\`${r.id}\`**`;
+            if (r.error) {
+              text += ` — ⚠ ${r.error}\n`;
+            } else if (groupNames.length === 0 && albumNames.length === 0) {
+              text += ` — no groups or albums\n`;
+            } else {
+              const parts: string[] = [];
+              if (groupNames.length > 0) parts.push(`Groups: ${groupNames.join(", ")}`);
+              if (albumNames.length > 0) parts.push(`Albums: ${albumNames.join(", ")}`);
+              text += `\n   ${parts.join(" | ")}\n`;
+            }
+          }
         }
 
         return { content: [{ type: "text", text }] };
