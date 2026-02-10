@@ -89,6 +89,7 @@ Alternatively, leave credentials in the `.env` file and omit the `env` block.
 | `flickr_list_groups` | List groups you're a member of, with submission limits. |
 | `flickr_search_groups` | Search Flickr for groups by topic. |
 | `flickr_get_group_recents` | Browse recent photos in a group's pool to evaluate activity and fit. |
+| `flickr_get_photo_contexts` | Get all groups and albums a photo already belongs to. |
 | `flickr_add_to_group` | Submit a photo to a group pool. Blocks private photos from being submitted. |
 | `flickr_remove_from_group` | Remove a photo from a group pool. |
 

@@ -128,6 +128,54 @@ export function registerGroupTools(server: McpServer) {
   );
 
   server.tool(
+    "flickr_get_photo_contexts",
+    "Get all groups and albums a photo belongs to. Useful for checking where a photo has already been submitted.",
+    {
+      photo_id: z.string().describe("The Flickr photo ID"),
+    },
+    async ({ photo_id }) => {
+      try {
+        const flickr = getFlickr();
+        const res = await flickr("flickr.photos.getAllContexts", { photo_id });
+
+        const groups = res.set ? (Array.isArray(res.set) ? res.set : [res.set]) : [];
+        const pools = res.pool ? (Array.isArray(res.pool) ? res.pool : [res.pool]) : [];
+
+        let text = `## Contexts for photo \`${photo_id}\`\n\n`;
+
+        if (pools.length === 0 && groups.length === 0) {
+          text += "This photo is not in any groups or albums.";
+          return { content: [{ type: "text", text }] };
+        }
+
+        if (pools.length > 0) {
+          text += `### Groups (${pools.length})\n\n`;
+          pools.forEach((p: any, i: number) => {
+            const title = typeof p.title === "string" ? p.title : p.title?._content ?? "(unknown)";
+            text += `${i + 1}. **${title}** (NSID: \`${p.id}\`)\n`;
+            text += `   URL: https://www.flickr.com/groups/${p.id}/\n`;
+          });
+        }
+
+        if (groups.length > 0) {
+          text += `\n### Albums (${groups.length})\n\n`;
+          groups.forEach((s: any, i: number) => {
+            const title = typeof s.title === "string" ? s.title : s.title?._content ?? "(unknown)";
+            text += `${i + 1}. **${title}** (ID: \`${s.id}\`)\n`;
+          });
+        }
+
+        return { content: [{ type: "text", text }] };
+      } catch (err: any) {
+        return {
+          content: [{ type: "text", text: formatFlickrError(err) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
     "flickr_remove_from_group",
     "Remove a photo from a Flickr group's pool.",
     {
