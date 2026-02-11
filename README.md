@@ -98,6 +98,7 @@ Alternatively, leave credentials in the `.env` file and omit the `env` block.
 
 | Tool | Description |
 |------|-------------|
+| `flickr_get_activity` | Daily activity summary: total views across your account plus which photos got views, faves, and comments. |
 | `flickr_get_stats` | View your most popular photos by views/comments/favorites, or daily stats for a specific photo (last 28 days). |
 | `flickr_get_comments` | Read all comments on a photo. |
 | `flickr_add_comment` | Post a comment on any photo. |
