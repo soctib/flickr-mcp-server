@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { getFlickr, formatFlickrError } from "../flickr-client.js";
+import { getFlickr, getUserId, formatFlickrError } from "../flickr-client.js";
 import { fetchPhoto, fetchPhotoMedium } from "../image-fetcher.js";
 import { formatPhotoListItem, formatPhotoMetadata } from "../formatters.js";
 import type { FlickrPhoto, FlickrPhotoInfo, FlickrSize } from "../types.js";
@@ -142,13 +142,13 @@ export function registerPhotoTools(server: McpServer) {
     "Fetch a specific photo's image and full metadata so you can SEE it. Returns the image and details including title, description, tags, dates, view/fave/comment counts, and Flickr URL. Single photo: shown at large size. Array of up to 10 photo IDs: each shown at medium size to keep total response size manageable.",
     {
       photo_id: z
-        .union([z.string(), z.array(z.string()).min(1).max(10)])
+        .union([z.string(), z.number().transform(String), z.array(z.union([z.string(), z.number().transform(String)])).min(1).max(10)])
         .describe("A single photo ID, or an array of up to 10 photo IDs (shown at medium size)"),
     },
     async ({ photo_id }) => {
       try {
         const flickr = getFlickr();
-        const ids = Array.isArray(photo_id) ? photo_id : [photo_id];
+        const ids = Array.isArray(photo_id) ? photo_id.map(String) : [String(photo_id)];
         const isBatch = ids.length > 1;
 
         const content: Array<
@@ -156,21 +156,36 @@ export function registerPhotoTools(server: McpServer) {
           | { type: "image"; data: string; mimeType: string }
         > = [];
 
+        const myUserId = getUserId();
+
         const results = await Promise.all(
           ids.map(async (id) => {
             try {
-              const [infoRes, sizesRes] = await Promise.all([
+              const fetches: [Promise<any>, Promise<any>, Promise<any>?] = [
                 flickr("flickr.photos.getInfo", { photo_id: id }),
                 flickr("flickr.photos.getSizes", { photo_id: id }),
-              ]);
+              ];
+              // Only fetch comments in single-photo mode
+              if (!isBatch) {
+                fetches.push(flickr("flickr.photos.comments.getList", { photo_id: id }).catch(() => null));
+              }
+              const [infoRes, sizesRes, commentsRes] = await Promise.all(fetches);
               const info: FlickrPhotoInfo = infoRes.photo;
               const sizes: FlickrSize[] = sizesRes.sizes.size;
               const image = isBatch
                 ? await fetchPhotoMedium(sizes)
                 : await fetchPhoto(sizes);
-              return { id, info, sizes, image, error: null };
+
+              // Check if the user has commented on this photo
+              let userCommented = false;
+              if (commentsRes?.comments?.comment) {
+                const comments = commentsRes.comments.comment;
+                userCommented = comments.some((c: any) => c.author === myUserId);
+              }
+
+              return { id, info, sizes, image, userCommented, error: null };
             } catch (err: any) {
-              return { id, info: null, sizes: null, image: null, error: err.message || String(err) };
+              return { id, info: null, sizes: null, image: null, userCommented: false, error: err.message || String(err) };
             }
           })
         );
@@ -185,7 +200,10 @@ export function registerPhotoTools(server: McpServer) {
           }
 
           const info = r.info!;
-          const metadataText = formatPhotoMetadata(info);
+          let metadataText = formatPhotoMetadata(info);
+          if (!isBatch && r.userCommented) {
+            metadataText += `**You commented:** Yes\n`;
+          }
 
           if (r.image) {
             content.push({
