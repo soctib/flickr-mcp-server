@@ -83,6 +83,61 @@ export function registerPhotoTools(server: McpServer) {
   );
 
   server.tool(
+    "flickr_get_favorites",
+    "List your favorite (faved) photos on Flickr. Returns other people's photos that you have faved, with metadata and owner names.",
+    {
+      count: z
+        .number()
+        .int()
+        .min(1)
+        .max(50)
+        .default(10)
+        .describe("Number of favorites to return (1-50)"),
+      page: z
+        .number()
+        .int()
+        .min(1)
+        .default(1)
+        .describe("Page number for pagination"),
+    },
+    async ({ count, page }) => {
+      try {
+        const flickr = getFlickr();
+        const res = await flickr("flickr.favorites.getList", {
+          per_page: String(count),
+          page: String(page),
+          extras:
+            "description,tags,date_taken,date_upload,views,count_faves,count_comments,owner_name,date_faved",
+        });
+
+        const photos: FlickrPhoto[] = res.photos.photo;
+        if (photos.length === 0) {
+          return {
+            content: [{ type: "text", text: "No favorites found." }],
+          };
+        }
+
+        const totalPages = res.photos.pages;
+        const total = res.photos.total;
+
+        const lines = photos.map((p, i) =>
+          formatPhotoListItem(p, i + (page - 1) * count)
+        );
+
+        const header = `**Your Favorites** (page ${page}/${totalPages}, ${total} total)\n\n`;
+        const text = header + lines.join("\n\n");
+
+        return { content: [{ type: "text", text }] };
+      } catch (err: any) {
+        return {
+          content: [{ type: "text", text: formatFlickrError(err) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
     "flickr_view_photo",
     "Fetch a specific photo's image and full metadata so you can SEE it. Returns the image and details including title, description, tags, dates, view/fave/comment counts, and Flickr URL. Single photo: shown at large size. Array of up to 10 photo IDs: each shown at medium size to keep total response size manageable.",
     {

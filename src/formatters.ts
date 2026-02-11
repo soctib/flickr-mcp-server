@@ -16,7 +16,9 @@ export function formatPhotoListItem(photo: FlickrPhoto, index: number): string {
   const faves = photo.count_faves ?? "0";
   const comments = photo.count_comments ?? "0";
 
-  let out = `**${index + 1}. ${title}** (ID: \`${photo.id}\`)\n`;
+  let out = `**${index + 1}. ${title}** (ID: \`${photo.id}\`)`;
+  if (photo.ownername) out += ` by ${photo.ownername}`;
+  out += "\n";
   if (truncDesc) out += `   ${truncDesc}\n`;
   out += `   Tags: ${tags}\n`;
   out += `   Taken: ${taken} | Views: ${views} | Faves: ${faves} | Comments: ${comments}`;

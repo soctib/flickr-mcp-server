@@ -1,6 +1,7 @@
 export interface FlickrPhoto {
   id: string;
   owner: string;
+  ownername?: string;
   secret: string;
   server: string;
   farm: number;
@@ -13,6 +14,7 @@ export interface FlickrPhoto {
   count_faves?: string;
   count_comments?: string;
   url_sq?: string;
+  date_faved?: string;
 }
 
 export interface FlickrPhotoInfo {

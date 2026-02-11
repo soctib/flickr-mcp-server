@@ -70,6 +70,7 @@ Alternatively, leave credentials in the `.env` file and omit the `env` block.
 | Tool | Description |
 |------|-------------|
 | `flickr_get_recent_photos` | List your recent uploads with metadata. Filter by visibility (public, private, friends, family). |
+| `flickr_get_favorites` | List your faved photos with metadata and owner names. |
 | `flickr_view_photo` | Fetch a photo's image and full metadata. Pass up to 10 IDs to view multiple photos at medium size. |
 | `flickr_view_thumbs` | View multiple photos as 150px square thumbnails. Pass photo IDs, or an album ID to browse visually. |
 | `flickr_set_metadata` | Update a photo's title and/or description. |
