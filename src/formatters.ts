@@ -16,12 +16,15 @@ export function formatPhotoListItem(photo: FlickrPhoto, index: number): string {
   const faves = photo.count_faves ?? "0";
   const comments = photo.count_comments ?? "0";
 
+  const flickrUrl = `https://www.flickr.com/photos/${photo.owner}/${photo.id}/`;
+
   let out = `**${index + 1}. ${title}** (ID: \`${photo.id}\`)`;
   if (photo.ownername) out += ` by ${photo.ownername}`;
   out += "\n";
   if (truncDesc) out += `   ${truncDesc}\n`;
   out += `   Tags: ${tags}\n`;
-  out += `   Taken: ${taken} | Views: ${views} | Faves: ${faves} | Comments: ${comments}`;
+  out += `   Taken: ${taken} | Views: ${views} | Faves: ${faves} | Comments: ${comments}\n`;
+  out += `   ${flickrUrl}`;
   return out;
 }
 
@@ -55,6 +58,7 @@ export function formatGroupList(groups: FlickrGroup[]): string {
       if (g.throttle?.remaining) {
         out += ` | Remaining submissions: ${g.throttle.remaining}`;
       }
+      out += `\n   https://www.flickr.com/groups/${g.nsid}/`;
       return out;
     })
     .join("\n\n");

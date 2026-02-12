@@ -139,7 +139,7 @@ export function registerPhotoTools(server: McpServer) {
 
   server.tool(
     "flickr_view_photo",
-    "Fetch a specific photo's image and full metadata so you can SEE it. Returns the image and details including title, description, tags, dates, view/fave/comment counts, and Flickr URL. Single photo: shown at large size. Array of up to 10 photo IDs: each shown at medium size to keep total response size manageable.",
+    "Fetch a specific photo's image and full metadata so you can SEE it. Returns the image and details including title, description, tags, dates, view/fave/comment counts, and Flickr URL. Single photo: shown at large size. Array of up to 10 photo IDs: each shown at medium size to keep total response size manageable. Always mention the Flickr URL to the user so they can view the photo at full resolution.",
     {
       photo_id: z
         .union([z.string(), z.number().transform(String), z.array(z.union([z.string(), z.number().transform(String)])).min(1).max(10)])
@@ -183,9 +183,9 @@ export function registerPhotoTools(server: McpServer) {
                 userCommented = comments.some((c: any) => c.author === myUserId);
               }
 
-              return { id, info, sizes, image, userCommented, error: null };
+              return { id, info, image, userCommented, error: null };
             } catch (err: any) {
-              return { id, info: null, sizes: null, image: null, userCommented: false, error: err.message || String(err) };
+              return { id, info: null, image: null, userCommented: false, error: err.message || String(err) };
             }
           })
         );

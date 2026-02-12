@@ -92,7 +92,8 @@ export function registerAlbumTools(server: McpServer) {
 
           let out = `**${i + 1 + (page - 1) * count}. ${title}** (ID: \`${ps.id}\`) [${visibility}]\n`;
           if (truncDesc) out += `   ${truncDesc}\n`;
-          out += `   Photos: ${photoCount} | Videos: ${videoCount} | Created: ${created} | Updated: ${updated}`;
+          out += `   Photos: ${photoCount} | Videos: ${videoCount} | Created: ${created} | Updated: ${updated}\n`;
+          out += `   https://www.flickr.com/photos/${targetUser}/albums/${ps.id}/`;
           return out;
         });
 
@@ -164,7 +165,8 @@ export function registerAlbumTools(server: McpServer) {
           formatPhotoListItem(p, i + (page - 1) * count)
         );
 
-        const header = `**Album: ${albumTitle}** (page ${page}/${totalPages}, ${total} photos)\n\n`;
+        const albumUrl = `https://www.flickr.com/photos/${targetUser}/albums/${album_id}/`;
+        const header = `**Album: ${albumTitle}** (page ${page}/${totalPages}, ${total} photos)\n${albumUrl}\n\n`;
         const text = header + lines.join("\n\n");
 
         return { content: [{ type: "text", text }] };
