@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { getFlickr, formatFlickrError } from "../flickr-client.js";
+import { getFlickr, getUserId, formatFlickrError } from "../flickr-client.js";
 import { formatStatsTable, extractContent } from "../formatters.js";
 
 export function registerStatsTools(server: McpServer) {
@@ -115,6 +115,173 @@ export function registerStatsTools(server: McpServer) {
 
           return { content: [{ type: "text", text }] };
         }
+      } catch (err: any) {
+        return {
+          content: [{ type: "text", text: formatFlickrError(err) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "flickr_get_photo_referrers",
+    "Get which Flickr pages (groups, photostream, search, etc.) drove views to a photo. Shows where your traffic comes from within Flickr. Only the last 28 days of data are available.",
+    {
+      photo_id: z
+        .union([z.string(), z.number().transform(String)])
+        .optional()
+        .describe("Photo ID. If omitted, returns referrers across all your photos."),
+      date: z
+        .string()
+        .optional()
+        .describe("YYYY-MM-DD format. Defaults to yesterday."),
+      days: z
+        .number()
+        .int()
+        .min(1)
+        .max(28)
+        .optional()
+        .describe("Aggregate referrers over this many days (1-28). Defaults to 1."),
+    },
+    async ({ photo_id, date, days }) => {
+      try {
+        const flickr = getFlickr();
+        const numDays = days || 1;
+        const endDate = date
+          ? new Date(date)
+          : new Date(Date.now() - 86_400_000);
+
+        const dates: string[] = [];
+        for (let i = numDays - 1; i >= 0; i--) {
+          const d = new Date(endDate.getTime() - i * 86_400_000);
+          dates.push(d.toISOString().split("T")[0]);
+        }
+
+        // Fetch referrers for flickr.com for each day in parallel
+        const allReferrers = await Promise.all(
+          dates.map(async (d) => {
+            try {
+              const params: Record<string, string> = {
+                date: d,
+                domain: "flickr.com",
+                per_page: "100",
+              };
+              if (photo_id) params.photo_id = String(photo_id);
+              const res = await flickr("flickr.stats.getPhotoReferrers", params);
+              return (res.domain?.referrer || []) as Array<{ url: string; views: string }>;
+            } catch {
+              return [];
+            }
+          })
+        );
+
+        // Normalize a referrer URL to a key for aggregation
+        // Group URLs get a "group:" prefix so we can resolve names later
+        function normalizeReferrer(url: string): string {
+          const groupMatch = url.match(/flickr\.com\/groups\/([^/]+)/);
+          if (groupMatch) return `group:${groupMatch[1]}`;
+          const searchMatch = url.match(/flickr\.com\/search/);
+          if (searchMatch) return "Flickr Search";
+          const exploreMatch = url.match(/flickr\.com\/explore/);
+          if (exploreMatch) return "Flickr Explore";
+          const photostreamMatch = url.match(/flickr\.com\/photos\/([^/]+)\/?$/);
+          if (photostreamMatch) return `Photostream: ${photostreamMatch[1]}`;
+          const favesMatch = url.match(/flickr\.com\/photos\/([^/]+)\/favorites/);
+          if (favesMatch) return `Favorites: ${favesMatch[1]}`;
+          return url.replace(/^https?:\/\//, "");
+        }
+
+        // Aggregate views by normalized source across all days
+        const sourceViews = new Map<string, number>();
+        for (const dayReferrers of allReferrers) {
+          for (const r of dayReferrers) {
+            const key = normalizeReferrer(r.url);
+            sourceViews.set(key, (sourceViews.get(key) || 0) + parseInt(r.views || "0"));
+          }
+        }
+
+        if (sourceViews.size === 0) {
+          const period = numDays === 1
+            ? dates[0]
+            : `${dates[0]} to ${dates[dates.length - 1]}`;
+          return {
+            content: [{
+              type: "text",
+              text: photo_id
+                ? `No Flickr referrer data for photo \`${photo_id}\` on ${period}.`
+                : `No Flickr referrer data for ${period}.`,
+            }],
+          };
+        }
+
+        // Resolve group slugs/NSIDs to human-readable names
+        const groupKeys = [...sourceViews.keys()].filter((k) => k.startsWith("group:"));
+        const groupNames = new Map<string, string>();
+
+        if (groupKeys.length > 0) {
+          // Fetch user's groups for bulk lookup
+          try {
+            const res = await flickr("flickr.people.getGroups", { user_id: getUserId() });
+            const groups = res.groups?.group || [];
+            for (const g of groups) {
+              const name = typeof g.name === "string" ? g.name : g.name?._content ?? "";
+              if (name) {
+                // Map both NSID and path_alias to the name
+                groupNames.set(g.nsid, name);
+                if (g.path_alias) groupNames.set(g.path_alias, name);
+              }
+            }
+          } catch {
+            // Non-fatal — we'll just show slugs
+          }
+
+          // Resolve any remaining unknown groups individually
+          const unknownSlugs = groupKeys
+            .map((k) => k.slice(6))
+            .filter((slug) => !groupNames.has(slug));
+
+          if (unknownSlugs.length > 0) {
+            await Promise.all(
+              unknownSlugs.map(async (slug) => {
+                try {
+                  const res = await flickr("flickr.groups.getInfo", { group_id: slug });
+                  const name = typeof res.group?.name === "string"
+                    ? res.group.name
+                    : res.group?.name?._content;
+                  if (name) groupNames.set(slug, name);
+                } catch {
+                  // Leave as slug
+                }
+              })
+            );
+          }
+        }
+
+        // Sort by views descending
+        const sorted = [...sourceViews.entries()].sort((a, b) => b[1] - a[1]);
+        const totalViews = sorted.reduce((sum, [, v]) => sum + v, 0);
+
+        const period = numDays === 1
+          ? dates[0]
+          : `${dates[0]} to ${dates[dates.length - 1]}`;
+        const target = photo_id ? `photo \`${photo_id}\`` : "all photos";
+
+        let text = `## Flickr Referrers for ${target} (${period})\n\n`;
+        text += `**Total Flickr views:** ${totalViews}\n\n`;
+        text += `| Views | Source |\n`;
+        text += `|------:|--------|\n`;
+        for (const [key, views] of sorted) {
+          let label = key;
+          if (key.startsWith("group:")) {
+            const slug = key.slice(6);
+            const name = groupNames.get(slug);
+            label = name ? `Group: ${name}` : `Group: ${slug}`;
+          }
+          text += `| ${views} | ${label} |\n`;
+        }
+
+        return { content: [{ type: "text", text }] };
       } catch (err: any) {
         return {
           content: [{ type: "text", text: formatFlickrError(err) }],
