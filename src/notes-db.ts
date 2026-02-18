@@ -1,11 +1,9 @@
-import Database from "better-sqlite3";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const DB_PATH = resolve(__dirname, "..", "notes.db");
-
-let db: Database.Database;
+const JSON_PATH = resolve(__dirname, "..", "notes.json");
 
 export type EntityType = "photo" | "album" | "group";
 
@@ -15,24 +13,26 @@ export interface NoteRow {
   entity_id: string;
   note: string;
   created_at: string;
-  updated_at: string;
+}
+
+interface NotesData {
+  next_id: number;
+  notes: NoteRow[];
+}
+
+let data: NotesData;
+
+function save(): void {
+  writeFileSync(JSON_PATH, JSON.stringify(data, null, 2));
 }
 
 export function initNotesDb(): void {
-  db = new Database(DB_PATH);
-  db.pragma("journal_mode = WAL");
-
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS notes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      entity_type TEXT NOT NULL CHECK(entity_type IN ('photo', 'album', 'group')),
-      entity_id TEXT NOT NULL,
-      note TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE INDEX IF NOT EXISTS idx_notes_entity ON notes(entity_type, entity_id);
-  `);
+  if (existsSync(JSON_PATH)) {
+    data = JSON.parse(readFileSync(JSON_PATH, "utf-8"));
+  } else {
+    data = { next_id: 1, notes: [] };
+    save();
+  }
 }
 
 export function addNote(
@@ -40,34 +40,36 @@ export function addNote(
   entityId: string,
   note: string
 ): NoteRow {
-  const stmt = db.prepare(`
-    INSERT INTO notes (entity_type, entity_id, note)
-    VALUES (?, ?, ?)
-  `);
-  const result = stmt.run(entityType, entityId, note);
-
-  return db
-    .prepare("SELECT * FROM notes WHERE id = ?")
-    .get(result.lastInsertRowid) as NoteRow;
+  const row: NoteRow = {
+    id: data.next_id++,
+    entity_type: entityType,
+    entity_id: entityId,
+    note,
+    created_at: new Date().toISOString().replace("T", " ").slice(0, 19),
+  };
+  data.notes.push(row);
+  save();
+  return row;
 }
 
 export function getNotes(entityType: EntityType, entityId: string): NoteRow[] {
-  return db
-    .prepare(
-      "SELECT * FROM notes WHERE entity_type = ? AND entity_id = ? ORDER BY created_at DESC"
-    )
-    .all(entityType, entityId) as NoteRow[];
+  return data.notes
+    .filter((n) => n.entity_type === entityType && n.entity_id === entityId)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
 }
 
 export function deleteNote(noteId: number): boolean {
-  const result = db.prepare("DELETE FROM notes WHERE id = ?").run(noteId);
-  return result.changes > 0;
+  const idx = data.notes.findIndex((n) => n.id === noteId);
+  if (idx === -1) return false;
+  data.notes.splice(idx, 1);
+  save();
+  return true;
 }
 
 export function searchNotes(query: string): NoteRow[] {
-  return db
-    .prepare(
-      "SELECT * FROM notes WHERE note LIKE ? ORDER BY updated_at DESC LIMIT 50"
-    )
-    .all(`%${query}%`) as NoteRow[];
+  const lower = query.toLowerCase();
+  return data.notes
+    .filter((n) => n.note.toLowerCase().includes(lower))
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .slice(0, 50);
 }
