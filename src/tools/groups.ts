@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getFlickr, getUserId, formatFlickrError } from "../flickr-client.js";
-import { formatGroupList, formatGroupSearchResult } from "../formatters.js";
+import { formatGroupList, formatGroupSearchResult, extractContent } from "../formatters.js";
 
 export function registerGroupTools(server: McpServer) {
   server.tool(
@@ -79,7 +79,7 @@ export function registerGroupTools(server: McpServer) {
 
   server.tool(
     "flickr_add_to_group",
-    "Submit a photo to a Flickr group's pool. You must be a member of the group. Use flickr_list_groups to find group NSIDs.",
+    "Submit a photo to a Flickr group's pool. You must be a member of the group. Use flickr_join_group to join groups you're not a member of.",
     {
       photo_id: z.string().describe("The photo ID to submit"),
       group_id: z
@@ -119,6 +119,47 @@ export function registerGroupTools(server: McpServer) {
           ],
         };
       } catch (err: any) {
+        const code = err?.code;
+        const msg = err?.message?.toLowerCase() || "";
+
+        if (code === 2 || msg.includes("group not found") || msg.includes("not a member")) {
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  `Cannot add photo to group \`${group_id}\`: you are not a member (or the group was not found). ` +
+                  `Use \`flickr_join_group\` with group_id \`${group_id}\` to join first.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        if (code === 3) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Photo \`${photo_id}\` is already in group \`${group_id}\`'s pool.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        if (code === 5) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Cannot add photo: you've reached the submission limit for group \`${group_id}\`.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
         return {
           content: [{ type: "text", text: formatFlickrError(err) }],
           isError: true,
@@ -279,6 +320,112 @@ export function registerGroupTools(server: McpServer) {
           ],
         };
       } catch (err: any) {
+        return {
+          content: [{ type: "text", text: formatFlickrError(err) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "flickr_join_group",
+    "Join a Flickr group. If the group has rules, the first call (without user_has_read_the_rules_and_agreed) returns the rules WITHOUT joining. You MUST show the rules to the user and get their explicit confirmation, then call again with user_has_read_the_rules_and_agreed: true.",
+    {
+      group_id: z.string().describe("The group NSID to join"),
+      user_has_read_the_rules_and_agreed: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "Set to true ONLY after you have shown the group rules to the user and they explicitly agreed."
+        ),
+    },
+    async ({ group_id, user_has_read_the_rules_and_agreed }) => {
+      try {
+        const flickr = getFlickr();
+
+        const infoRes = await flickr("flickr.groups.getInfo", { group_id });
+        const group = infoRes.group;
+        const groupName = extractContent(group.name);
+        const rules = extractContent(group.rules);
+        const hasRules = rules.length > 0;
+
+        // If group has rules and user hasn't agreed yet, return the rules
+        if (hasRules && !user_has_read_the_rules_and_agreed) {
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  `## Rules for "${groupName}"\n\n` +
+                  `${rules}\n\n` +
+                  `---\n` +
+                  `Show these rules to the user. If they agree, call this tool again ` +
+                  `with \`user_has_read_the_rules_and_agreed: true\` to join.`,
+              },
+            ],
+          };
+        }
+
+        // Join the group
+        const joinParams: Record<string, string> = { group_id };
+        if (hasRules) {
+          joinParams.accept_rules = "1";
+        }
+        await flickr("flickr.groups.join", joinParams);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Joined group **"${groupName}"** (\`${group_id}\`).`,
+            },
+          ],
+        };
+      } catch (err: any) {
+        const code = err?.code;
+
+        if (code === 4) {
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  `Group \`${group_id}\` requires an invitation to join. ` +
+                  `Visit https://www.flickr.com/groups/${group_id}/ to request one.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        if (code === 6) {
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  `Flickr requires accepting the group rules before joining. ` +
+                  `Call this tool without \`user_has_read_the_rules_and_agreed\` to see the rules first.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        if (code === 7) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Cannot join: you are already a member of the maximum number of groups.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
         return {
           content: [{ type: "text", text: formatFlickrError(err) }],
           isError: true,
