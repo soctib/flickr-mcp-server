@@ -125,6 +125,103 @@ export function registerStatsTools(server: McpServer) {
   );
 
   server.tool(
+    "flickr_get_recent_faves",
+    "Get a chronological list of who faved your photos within a time period. Shows each fave event with the user, photo, and date. Useful for tracking engagement and discovering who appreciates your work.",
+    {
+      days: z
+        .number()
+        .int()
+        .min(1)
+        .max(300)
+        .default(7)
+        .describe("Number of days to look back (1-300). Defaults to 7."),
+    },
+    async ({ days }) => {
+      try {
+        const flickr = getFlickr();
+        const userId = getUserId();
+
+        // Collect all fave events across paginated results
+        const faves: Array<{
+          username: string;
+          user: string;
+          photoId: string;
+          photoTitle: string;
+          date: number;
+        }> = [];
+
+        let page = 1;
+        let totalPages = 1;
+
+        while (page <= totalPages) {
+          const res = await flickr("flickr.activity.userPhotos", {
+            timeframe: `${days}d`,
+            per_page: "50",
+            page: String(page),
+          });
+
+          const items = res.items?.item || [];
+          totalPages = parseInt(res.items?.pages) || 1;
+
+          for (const item of items) {
+            if (item.type !== "photo") continue;
+            const photoTitle = extractContent(item.title) || "(untitled)";
+            const photoId = item.id;
+            const events = item.activity?.event || [];
+
+            for (const ev of events) {
+              if (ev.type === "fave") {
+                faves.push({
+                  username: ev.username || ev.user || "unknown",
+                  user: ev.user,
+                  photoId,
+                  photoTitle,
+                  date: parseInt(ev.dateadded) || 0,
+                });
+              }
+            }
+          }
+
+          page++;
+        }
+
+        if (faves.length === 0) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `No faves on your photos in the last ${days} day${days === 1 ? "" : "s"}.`,
+              },
+            ],
+          };
+        }
+
+        // Sort by date descending (most recent first)
+        faves.sort((a, b) => b.date - a.date);
+
+        let text = `## Recent Faves (last ${days} day${days === 1 ? "" : "s"})\n\n`;
+        text += `**${faves.length} fave${faves.length === 1 ? "" : "s"}** across your photos\n\n`;
+        text += `| Date | User | Photo |\n`;
+        text += `|------|------|-------|\n`;
+
+        for (const f of faves) {
+          const dateStr = new Date(f.date * 1000).toISOString().split("T")[0];
+          const photoUrl = `https://www.flickr.com/photos/${userId}/${f.photoId}/`;
+          const userUrl = `https://www.flickr.com/photos/${f.user}/`;
+          text += `| ${dateStr} | [${f.username}](${userUrl}) | [${f.photoTitle}](${photoUrl}) |\n`;
+        }
+
+        return { content: [{ type: "text", text }] };
+      } catch (err: any) {
+        return {
+          content: [{ type: "text", text: formatFlickrError(err) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
     "flickr_get_photo_referrers",
     "Get which Flickr pages (groups, photostream, search, etc.) drove views to a photo. Shows where your traffic comes from within Flickr. Only the last 28 days of data are available.",
     {
