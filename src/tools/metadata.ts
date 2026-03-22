@@ -2,6 +2,21 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getFlickr, formatFlickrError } from "../flickr-client.js";
 
+/**
+ * Normalize a string for safe OAuth signing.
+ * Replaces unicode whitespace (middots, non-breaking spaces, etc.)
+ * and normalizes newlines so they don't break percent-encoding.
+ */
+function sanitizeText(text: string): string {
+  return text
+    .replace(/\u00B7/g, " ")           // middot → space
+    .replace(/[\u00A0\u2007\u202F]/g, " ")  // non-breaking / figure spaces
+    .replace(/[\u2000-\u200B]/g, " ")  // en/em/thin/hair spaces, zero-width
+    .replace(/\u200B/g, "")            // zero-width space → remove
+    .replace(/\r\n/g, "\n")            // normalize CRLF
+    .replace(/\r/g, "\n");             // normalize CR
+}
+
 export function registerMetadataTools(server: McpServer) {
   server.tool(
     "flickr_set_metadata",
@@ -30,8 +45,8 @@ export function registerMetadataTools(server: McpServer) {
       try {
         const flickr = getFlickr();
         const params: Record<string, string> = { photo_id };
-        if (title !== undefined) params.title = title;
-        if (description !== undefined) params.description = description;
+        if (title !== undefined) params.title = sanitizeText(title);
+        if (description !== undefined) params.description = sanitizeText(description);
 
         await flickr("flickr.photos.setMeta", params);
 
