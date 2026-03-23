@@ -141,7 +141,57 @@ export function registerStatsTools(server: McpServer) {
         const flickr = getFlickr();
         const userId = getUserId();
 
-        // Collect all fave events across paginated results
+        // Step 1: For each day, get popular photos that had faves
+        const endDate = new Date(Date.now() - 86_400_000); // yesterday
+        const dates: string[] = [];
+        for (let i = days - 1; i >= 0; i--) {
+          const d = new Date(endDate.getTime() - i * 86_400_000);
+          dates.push(d.toISOString().split("T")[0]);
+        }
+
+        // Collect photo IDs that had faves (with their titles), deduped
+        const photoMap = new Map<string, string>(); // id → title
+
+        // Fetch daily stats with concurrency of 2
+        const dateJobs = [...dates];
+        let di = 0;
+        async function dateFetcher() {
+          while (di < dateJobs.length) {
+            const date = dateJobs[di++];
+            try {
+              const res = await flickr("flickr.stats.getPopularPhotos", {
+                date,
+                per_page: "100",
+                sort: "favorites",
+              });
+              const photos = res.photos?.photo || [];
+              for (const p of photos) {
+                const faveCount = parseInt(p.stats?.favorites ?? "0");
+                if (faveCount > 0) {
+                  const title = extractContent(p.title) || "(untitled)";
+                  photoMap.set(p.id, title);
+                }
+              }
+            } catch {
+              // Skip days with no data
+            }
+          }
+        }
+        await Promise.all([dateFetcher(), dateFetcher()]);
+
+        if (photoMap.size === 0) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `No faves on your photos in the last ${days} day${days === 1 ? "" : "s"}.`,
+              },
+            ],
+          };
+        }
+
+        // Step 2: For each photo with faves, get who faved it
+        const cutoff = endDate.getTime() / 1000 - (days - 1) * 86_400;
         const faves: Array<{
           username: string;
           user: string;
@@ -150,40 +200,35 @@ export function registerStatsTools(server: McpServer) {
           date: number;
         }> = [];
 
-        let page = 1;
-        let totalPages = 1;
-
-        while (page <= totalPages) {
-          const res = await flickr("flickr.activity.userPhotos", {
-            timeframe: `${days}d`,
-            per_page: "50",
-            page: String(page),
-          });
-
-          const items = res.items?.item || [];
-          totalPages = parseInt(res.items?.pages) || 1;
-
-          for (const item of items) {
-            if (item.type !== "photo") continue;
-            const photoTitle = extractContent(item.title) || "(untitled)";
-            const photoId = item.id;
-            const events = item.activity?.event || [];
-
-            for (const ev of events) {
-              if (ev.type === "fave") {
-                faves.push({
-                  username: ev.username || ev.user || "unknown",
-                  user: ev.user,
-                  photoId,
-                  photoTitle,
-                  date: parseInt(ev.dateadded) || 0,
-                });
+        const photoJobs = [...photoMap.entries()];
+        let pi = 0;
+        async function faveFetcher() {
+          while (pi < photoJobs.length) {
+            const [photoId, photoTitle] = photoJobs[pi++];
+            try {
+              const res = await flickr("flickr.photos.getFavorites", {
+                photo_id: photoId,
+                per_page: "50",
+              });
+              const persons = res.photo?.person || [];
+              for (const p of persons) {
+                const faveDate = parseInt(p.favedate) || 0;
+                if (faveDate >= cutoff) {
+                  faves.push({
+                    username: p.username || p.nsid || "unknown",
+                    user: p.nsid,
+                    photoId,
+                    photoTitle,
+                    date: faveDate,
+                  });
+                }
               }
+            } catch {
+              // Skip photos we can't access
             }
           }
-
-          page++;
         }
+        await Promise.all([faveFetcher(), faveFetcher()]);
 
         if (faves.length === 0) {
           return {

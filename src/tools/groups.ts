@@ -169,6 +169,78 @@ export function registerGroupTools(server: McpServer) {
   );
 
   server.tool(
+    "flickr_batch_add_to_groups",
+    "Submit up to 5 photos to any number of groups in one call. Each photo×group combination is attempted independently — failures don't stop the batch. Returns a summary of successes and failures.",
+    {
+      photo_ids: z
+        .array(z.string())
+        .min(1)
+        .max(5)
+        .describe("Array of photo IDs to submit (1-5)"),
+      group_ids: z
+        .array(z.string())
+        .min(1)
+        .describe("Array of group NSIDs to submit to"),
+    },
+    async ({ photo_ids, group_ids }) => {
+      const flickr = getFlickr();
+
+      const successes: string[] = [];
+      const failures: string[] = [];
+
+      // Build flat list of all submissions
+      const jobs = photo_ids.flatMap((photo_id) =>
+        group_ids.map((group_id) => ({ photo_id, group_id }))
+      );
+
+      // Process with concurrency limit of 2
+      let i = 0;
+      async function worker() {
+        while (i < jobs.length) {
+          const job = jobs[i++];
+          try {
+            await flickr("flickr.groups.pools.add", job);
+            successes.push(`\`${job.photo_id}\` → \`${job.group_id}\``);
+          } catch (err: any) {
+            const code = err?.code;
+            let reason: string;
+            if (code === 2) reason = "not a member / group not found";
+            else if (code === 3) reason = "already in pool";
+            else if (code === 5) reason = "submission limit reached";
+            else if (code === 6) reason = "photo not public";
+            else reason = err?.message || String(err);
+            failures.push(`\`${job.photo_id}\` → \`${job.group_id}\`: ${reason}`);
+          }
+        }
+      }
+
+      await Promise.all([worker(), worker()]);
+
+      let text = `## Batch Submit Results\n\n`;
+
+      if (successes.length > 0) {
+        text += `**${successes.length} succeeded:**\n`;
+        for (const s of successes) text += `- ${s}\n`;
+      }
+
+      if (failures.length > 0) {
+        if (successes.length > 0) text += `\n`;
+        text += `**${failures.length} failed:**\n`;
+        for (const f of failures) text += `- ${f}\n`;
+      }
+
+      if (successes.length === 0 && failures.length === 0) {
+        text += `No submissions attempted.`;
+      }
+
+      return {
+        content: [{ type: "text", text }],
+        isError: failures.length > 0 && successes.length === 0,
+      };
+    }
+  );
+
+  server.tool(
     "flickr_get_photo_contexts",
     "Get all groups and albums photos belong to. Pass photo IDs directly, or pass an album_id to check every photo in that album. All lookups run in parallel. Useful for checking where photos have already been submitted before adding them to more groups.",
     {
