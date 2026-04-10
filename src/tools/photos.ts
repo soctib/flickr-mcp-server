@@ -83,6 +83,66 @@ export function registerPhotoTools(server: McpServer) {
   );
 
   server.tool(
+    "flickr_get_user_photos",
+    "Get a specific user's recent public photos. Works for any Flickr user, not just yourself. Pass an NSID or path alias. Returns photo IDs, titles, tags, and metadata.",
+    {
+      user_id: z
+        .string()
+        .describe("The user's NSID (e.g. '12345678@N00') or path alias"),
+      count: z
+        .number()
+        .int()
+        .min(1)
+        .max(50)
+        .default(10)
+        .describe("Number of photos to return (1-50)"),
+      page: z
+        .number()
+        .int()
+        .min(1)
+        .default(1)
+        .describe("Page number for pagination"),
+    },
+    async ({ user_id, count, page }) => {
+      try {
+        const flickr = getFlickr();
+        const res = await flickr("flickr.people.getPhotos", {
+          user_id,
+          per_page: String(count),
+          page: String(page),
+          extras:
+            "description,tags,date_taken,date_upload,views,count_faves,count_comments,owner_name",
+        });
+
+        const photos: FlickrPhoto[] = res.photos.photo;
+        if (photos.length === 0) {
+          return {
+            content: [{ type: "text", text: `No public photos found for user \`${user_id}\`.` }],
+          };
+        }
+
+        const totalPages = res.photos.pages;
+        const total = res.photos.total;
+
+        const lines = photos.map((p, i) =>
+          formatPhotoListItem(p, i + (page - 1) * count)
+        );
+
+        const ownerName = photos[0].ownername || user_id;
+        const header = `**Photos by ${ownerName}** (page ${page}/${totalPages}, ${total} total)\n\n`;
+        const text = header + lines.join("\n\n");
+
+        return { content: [{ type: "text", text }] };
+      } catch (err: any) {
+        return {
+          content: [{ type: "text", text: formatFlickrError(err) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
     "flickr_get_favorites",
     "List your favorite (faved) photos on Flickr. Returns other people's photos that you have faved, with metadata and owner names.",
     {
